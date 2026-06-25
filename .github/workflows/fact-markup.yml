@@ -14,7 +14,7 @@ on:
       output_dir:
         description: Output directory for fetched articles
         required: false
-        default: 20_project/fact-markup
+        default: output
         type: string
       commit_outputs:
         description: Commit generated files back to the branch
