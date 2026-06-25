@@ -64,7 +64,18 @@ jobs:
             args+=(--input-file "$FACT_MARKUP_INPUT_FILE")
           fi
           args+=(--output-dir "$FACT_MARKUP_OUTPUT_DIR")
-          python scripts/fact_markup.py "${args[@]}"
+
+          attempt=1
+          until python scripts/fact_markup.py "${args[@]}"; do
+            status=$?
+            if [ "$attempt" -ge 3 ]; then
+              exit "$status"
+            fi
+            delay=$((attempt * 20))
+            echo "::warning::fact markup failed on attempt $attempt; retrying in ${delay}s."
+            sleep "$delay"
+            attempt=$((attempt + 1))
+          done
 
       - name: Upload generated artifacts
         uses: actions/upload-artifact@v4
