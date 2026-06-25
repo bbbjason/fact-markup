@@ -1,0 +1,80 @@
+name: Fact Markup
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Article URL to fetch and mark
+        required: false
+        type: string
+      input_file:
+        description: Existing Markdown path in the repository
+        required: false
+        type: string
+      output_dir:
+        description: Output directory for fetched articles
+        required: false
+        default: 20_project/fact-markup
+        type: string
+      commit_outputs:
+        description: Commit generated files back to the branch
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  fact-markup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-fact-markup.txt
+
+      - name: Run fact markup
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4-mini' }}
+          FACT_MARKUP_URL: ${{ inputs.url }}
+          FACT_MARKUP_INPUT_FILE: ${{ inputs.input_file }}
+          FACT_MARKUP_OUTPUT_DIR: ${{ inputs.output_dir }}
+        run: |
+          args=()
+          if [ -n "$FACT_MARKUP_URL" ]; then
+            args+=(--url "$FACT_MARKUP_URL")
+          fi
+          if [ -n "$FACT_MARKUP_INPUT_FILE" ]; then
+            args+=(--input-file "$FACT_MARKUP_INPUT_FILE")
+          fi
+          args+=(--output-dir "$FACT_MARKUP_OUTPUT_DIR")
+          python scripts/fact_markup.py "${args[@]}"
+
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fact-markup-output
+          path: |
+            ${{ inputs.output_dir }}/
+            **/*.fact-marked.md
+            **/*.judgments.jsonl
+
+      - name: Commit generated files
+        if: ${{ inputs.commit_outputs }}
+        env:
+          FACT_MARKUP_OUTPUT_DIR: ${{ inputs.output_dir }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FACT_MARKUP_OUTPUT_DIR" scripts/fact_markup.py requirements-fact-markup.txt .github/workflows/fact-markup.yml
+          git add -- '*.fact-marked.md' '*.judgments.jsonl'
+          git diff --cached --quiet || git commit -m "Add fact-markup automation output"
+          git push
