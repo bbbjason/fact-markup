@@ -304,14 +304,16 @@ def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dic
         if len(line_numbers) != 1:
             raise ValueError(f"Expected one line number per record: {record}")
         line_no = int(line_numbers[0])
-        if expected.get(line_no) != record.get("text"):
-            raise ValueError(f"Model text mismatch on line {line_no}")
+        if line_no not in expected:
+            raise ValueError(f"Unexpected line number from model: {line_no}")
         votes = record.get("votes") or []
         if len(votes) != 3:
             raise ValueError(f"Expected exactly three votes on line {line_no}")
         label = record.get("label")
         if label not in {"FACT", "NONFACT"}:
             raise ValueError(f"Invalid label on line {line_no}: {label}")
+        record["line_span"] = str(line_no)
+        record["text"] = expected[line_no]
         records.append(record)
 
     seen = {int(record["line_numbers"][0]) for record in records}
@@ -411,7 +413,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create fact-marked Markdown and JSONL judgments.")
     parser.add_argument("--url", help="Article URL to fetch.")
     parser.add_argument("--input-file", help="Existing Markdown file to process.")
-    parser.add_argument("--output-dir", default="20_project/fact-markup", help="Output directory for fetched URLs.")
+    parser.add_argument("--output-dir", default="output", help="Output directory for fetched URLs.")
     parser.add_argument("--model", default=os.getenv("MISTRAL_MODEL", "mistral-medium-latest"))
     parser.add_argument("--chunk-size", type=int, default=60)
     args = parser.parse_args()
