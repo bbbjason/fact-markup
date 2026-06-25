@@ -202,12 +202,12 @@ def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dic
         + "\n".join(json.dumps({"line": line_no, "text": text}, ensure_ascii=False) for line_no, text in units)
     )
 
-    response = client.responses.create(
+    response = client.chat.complete(
         model=model,
-        input=prompt,
+        messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
-    raw = response.output_text.strip()
+    raw = strip_code_fence(response_text(response).strip())
     records: list[dict] = []
     expected = {line_no: text for line_no, text in units}
     for line in raw.splitlines():
@@ -237,9 +237,13 @@ def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dic
 
 
 def classify_all(text_lines: list[str], model: str, chunk_size: int) -> list[dict]:
-    from openai import OpenAI
+    from mistralai.client import Mistral
 
-    client = OpenAI()
+    api_key = os.getenv("MISTRAL_API_KEY")
+    if not api_key:
+        raise RuntimeError("MISTRAL_API_KEY is required.")
+
+    client = Mistral(api_key=api_key)
     units = [
         (idx + 1, line)
         for idx, line in enumerate(text_lines)
@@ -249,6 +253,32 @@ def classify_all(text_lines: list[str], model: str, chunk_size: int) -> list[dic
     for start in range(0, len(units), chunk_size):
         records.extend(classify_units(client, model, units[start : start + chunk_size]))
     return records
+
+
+def response_text(response) -> str:
+    content = response.choices[0].message.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for chunk in content:
+            if isinstance(chunk, dict):
+                parts.append(str(chunk.get("text", "")))
+            else:
+                parts.append(str(getattr(chunk, "text", "")))
+        return "".join(parts)
+    return str(content)
+
+
+def strip_code_fence(text: str) -> str:
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 def write_outputs(source_path: Path, text_lines: list[str], judgments: list[dict]) -> tuple[Path, Path]:
@@ -297,7 +327,7 @@ def main() -> int:
     parser.add_argument("--url", help="Article URL to fetch.")
     parser.add_argument("--input-file", help="Existing Markdown file to process.")
     parser.add_argument("--output-dir", default="20_project/fact-markup", help="Output directory for fetched URLs.")
-    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"))
+    parser.add_argument("--model", default=os.getenv("MISTRAL_MODEL", "mistral-medium-latest"))
     parser.add_argument("--chunk-size", type=int, default=60)
     args = parser.parse_args()
 
