@@ -301,20 +301,21 @@ def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dic
             continue
         record = json.loads(line)
         line_numbers = record.get("line_numbers") or []
-        if len(line_numbers) != 1:
-            raise ValueError(f"Expected one line number per record: {record}")
-        line_no = int(line_numbers[0])
-        if line_no not in expected:
-            raise ValueError(f"Unexpected line number from model: {line_no}")
         votes = record.get("votes") or []
         if len(votes) != 3:
-            raise ValueError(f"Expected exactly three votes on line {line_no}")
+            raise ValueError(f"Expected exactly three votes: {record}")
         label = record.get("label")
         if label not in {"FACT", "NONFACT"}:
-            raise ValueError(f"Invalid label on line {line_no}: {label}")
-        record["line_span"] = str(line_no)
-        record["text"] = expected[line_no]
-        records.append(record)
+            raise ValueError(f"Invalid label: {label}")
+        for raw_line_no in line_numbers:
+            line_no = int(raw_line_no)
+            if line_no not in expected:
+                raise ValueError(f"Unexpected line number from model: {line_no}")
+            expanded = dict(record)
+            expanded["line_span"] = str(line_no)
+            expanded["line_numbers"] = [line_no]
+            expanded["text"] = expected[line_no]
+            records.append(expanded)
 
     seen = {int(record["line_numbers"][0]) for record in records}
     missing = sorted(set(expected) - seen)
