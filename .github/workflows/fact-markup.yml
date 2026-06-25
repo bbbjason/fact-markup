@@ -85,6 +85,101 @@ jobs:
             attempt=$((attempt + 1))
           done
 
+      - name: Normalize conservative NONFACT rules
+        env:
+          FACT_MARKUP_OUTPUT_DIR: ${{ github.event_name == 'workflow_dispatch' && inputs.output_dir || 'output' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          output_dir = Path(os.environ.get("FACT_MARKUP_OUTPUT_DIR") or "output")
+
+          SUBJECTIVE_QUOTE_RE = re.compile(
+              r"(說|認為|相信|覺得|懷疑|希望|提醒|建議|形容|意思是|口號|自稱|更正).*"
+              r"(不敢|很好|重要|更重要|最|應該|有用|有差|值得|有效率|便宜|補貼|角色|答案|難題|推薦|幸運|革命|謙卑|前沿|大概|搞不好|可能|不夠|沒問題|同感)"
+          )
+          TECH_COMPARISON_RE = re.compile(
+              r"(功能類似|程式碼少到|讀得完|完整讀懂|同樣的功能|比.*(重要|有效率|少|多|更)|像是.*後繼者)"
+          )
+          INTERPRETATION_RE = re.compile(
+              r"(代表什麼|這代表|換句話說|這也解釋|同一個邏輯|他做的是|做的事情就是|正是|關鍵|底氣|意義|位置很清楚|接回|收斂成|真正的|價值.*在|讓.*變成可能)"
+          )
+          RHETORIC_RE = re.compile(
+              r"(不便宜|幫不上忙|吃電怪獸|天花板|藏著|沒被算進去|少見|值得|極為|最像|最誠實|非常人性|一等公民|門檻.*(塌|掉)|把手弄濕)"
+          )
+          JOKE_OR_HYPOTHESIS_RE = re.compile(
+              r"(開玩笑|半開玩笑|笑說|搞不好|大概|就算|如果|最多也只能|假設|夢想|不確定.*行不行|哪天真的發生)"
+          )
+
+          def force_nonfact_reason(text: str) -> str | None:
+              text = text.strip()
+              if not text:
+                  return None
+              if JOKE_OR_HYPOTHESIS_RE.search(text):
+                  return "玩笑、假設、推測或修辭性情境，保守標為 NONFACT"
+              if SUBJECTIVE_QUOTE_RE.search(text):
+                  return "轉述的是主觀感受、建議、評價或預測，保守標為 NONFACT"
+              if TECH_COMPARISON_RE.search(text):
+                  return "技術比較、類比或可讀性評價含主觀判斷，標為 NONFACT"
+              if INTERPRETATION_RE.search(text):
+                  return "行為總結、策略解讀或因果詮釋，標為 NONFACT"
+              if RHETORIC_RE.search(text):
+                  return "句中含評價或修辭性語言，標為 NONFACT"
+              if "Token" in text and any(term in text for term in ["不便宜", "算力", "電價", "戰爭"]):
+                  return "成本描述混合評價與修辭，標為 NONFACT"
+              return None
+
+          def nonfact_votes(reason: str):
+              return [
+                  {"label": "NONFACT", "reason": reason},
+                  {"label": "NONFACT", "reason": "依保守 fact-markup 規則，混合主觀或修辭時不標 FACT"},
+                  {"label": "NONFACT", "reason": "避免把引用、比較、玩笑或詮釋誤標為可查證事實"},
+              ]
+
+          changed_files = 0
+          changed_records = 0
+          for judgments_path in output_dir.rglob("*.judgments.jsonl"):
+              records = []
+              changed = False
+              for raw in judgments_path.read_text(encoding="utf-8").splitlines():
+                  if not raw.strip():
+                      continue
+                  record = json.loads(raw)
+                  reason = force_nonfact_reason(str(record.get("text", "")))
+                  if reason and record.get("label") != "NONFACT":
+                      record["label"] = "NONFACT"
+                      record["votes"] = nonfact_votes(reason)
+                      changed = True
+                      changed_records += 1
+                  records.append(record)
+              if not changed:
+                  continue
+
+              judgments_path.write_text(
+                  "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
+                  encoding="utf-8",
+              )
+
+              source_path = judgments_path.with_name(judgments_path.name.replace(".judgments.jsonl", ".md"))
+              fact_path = judgments_path.with_name(judgments_path.name.replace(".judgments.jsonl", ".fact-marked.md"))
+              if source_path.exists():
+                  labels = {int(record["line_numbers"][0]): record["label"] for record in records}
+                  marked_lines = []
+                  for idx, line in enumerate(source_path.read_text(encoding="utf-8").splitlines(), start=1):
+                      if labels.get(idx) == "NONFACT" and line.strip() and not line.startswith("~~"):
+                          marked_lines.append(f"~~{line}~~")
+                      else:
+                          marked_lines.append(line)
+                  fact_path.write_text("\n".join(marked_lines).rstrip() + "\n", encoding="utf-8")
+              changed_files += 1
+
+          print(f"normalized_judgment_files={changed_files}")
+          print(f"normalized_records={changed_records}")
+          PY
+
       - name: Upload generated artifacts
         uses: actions/upload-artifact@v4
         with:
