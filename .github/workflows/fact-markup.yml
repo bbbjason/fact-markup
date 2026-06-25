@@ -21,6 +21,11 @@ on:
         required: false
         default: true
         type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - .fact-markup-url
 
 jobs:
   fact-markup:
@@ -44,11 +49,14 @@ jobs:
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-medium-latest' }}
-          FACT_MARKUP_URL: ${{ inputs.url }}
-          FACT_MARKUP_INPUT_FILE: ${{ inputs.input_file }}
-          FACT_MARKUP_OUTPUT_DIR: ${{ inputs.output_dir }}
+          FACT_MARKUP_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.url || '' }}
+          FACT_MARKUP_INPUT_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.input_file || '' }}
+          FACT_MARKUP_OUTPUT_DIR: ${{ github.event_name == 'workflow_dispatch' && inputs.output_dir || 'output' }}
         run: |
           args=()
+          if [ -z "$FACT_MARKUP_URL" ] && [ -f ".fact-markup-url" ]; then
+            FACT_MARKUP_URL="$(head -n 1 .fact-markup-url | tr -d '\r\n')"
+          fi
           if [ -z "$FACT_MARKUP_URL" ] && [ -z "$FACT_MARKUP_INPUT_FILE" ]; then
             echo "::error::Fill either Article URL or Existing Markdown path."
             exit 1
@@ -82,14 +90,14 @@ jobs:
         with:
           name: fact-markup-output
           path: |
-            ${{ inputs.output_dir }}/
+            ${{ github.event_name == 'workflow_dispatch' && inputs.output_dir || 'output' }}/
             **/*.fact-marked.md
             **/*.judgments.jsonl
 
       - name: Commit generated files
-        if: ${{ inputs.commit_outputs }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.commit_outputs }}
         env:
-          FACT_MARKUP_OUTPUT_DIR: ${{ inputs.output_dir }}
+          FACT_MARKUP_OUTPUT_DIR: ${{ github.event_name == 'workflow_dispatch' && inputs.output_dir || 'output' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
