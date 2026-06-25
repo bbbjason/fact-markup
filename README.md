@@ -20,12 +20,12 @@ You can provide either:
 - `url`: fetch and process an article URL.
 - `input_file`: process an existing Markdown file already committed in the repository.
 
-`output_dir` defaults to `20_project/fact-markup` for fetched URLs. When `commit_outputs` is true, the workflow commits generated files back to the branch. The workflow also uploads generated files as a run artifact.
+`output_dir` defaults to `output` for fetched URLs. When `commit_outputs` is true, the workflow commits generated files back to the branch. The workflow also uploads generated files as a run artifact.
 
 ## Local usage
 
 ```bash
 python -m pip install -r requirements-fact-markup.txt
 export MISTRAL_API_KEY=...
-python scripts/fact_markup.py --url "https://example.com/article" --output-dir 20_project/fact-markup
+python scripts/fact_markup.py --url "https://example.com/article" --output-dir output
 ```
