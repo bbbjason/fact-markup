@@ -30,6 +30,40 @@ BOILERPLATE_PATTERNS = [
     r"\u76f8\u95dc\u6587\u7ae0",
     r"\u5ee3\u544a",
 ]
+LONG_CLAUSE_CHARS = 42
+CLAUSE_SPLIT_RE = re.compile(r"([\uff0c\uff1b\uff1a])")
+SENTENCE_SPLIT_RE = re.compile(r"([\u3002\uff01\uff1f!?])")
+
+
+def is_heading_or_structural(line: str) -> bool:
+    return line.startswith(("#", ">", "```"))
+
+
+def is_metadata_or_footer(line: str) -> bool:
+    text = line.strip()
+    if re.match(r"^-\s*\d{4}/\d{2}/\d{2}$", text):
+        return True
+    if re.match(r"^\u6838\u7a3f\u7de8\u8f2f[:\uff1a]", text):
+        return True
+    if text.startswith("\u672c\u6587\u521d\u7a3f\u7531 INSIDE"):
+        return True
+    if "\u9ede\u64ca\u7acb\u523b\u6210\u70ba\u6703\u54e1" in text:
+        return True
+    if text in {"\u5ef6\u4f38\u95b1\u8b80\uff1a", "\u76f8\u95dc\u6587\u7ae0"}:
+        return True
+    return False
+
+
+def is_tag_list(line: str, output: list[str]) -> bool:
+    text = line.strip()
+    if len(output) > 6:
+        return False
+    if not text.startswith("- "):
+        return False
+    if re.search(r"[\u3002\uff01\uff1f!?]", text):
+        return False
+    return "\u3001" in text or " \u3001 " in text
+
 
 def slugify(value: str, fallback: str = "article") -> str:
     value = re.sub(r"https?://", "", value)
@@ -147,10 +181,10 @@ def split_sentences(paragraph: str) -> list[str]:
     paragraph = re.sub(r"\s+", " ", paragraph).strip()
     if not paragraph:
         return []
-    if paragraph.startswith(("#", "-", ">", "```")):
+    if is_heading_or_structural(paragraph):
         return [paragraph]
 
-    parts = re.split(r"([\u3002\uff01\uff1f!?])", paragraph)
+    parts = SENTENCE_SPLIT_RE.split(paragraph)
     pieces: list[str] = []
     for idx in range(0, len(parts), 2):
         sentence = parts[idx].strip()
@@ -158,8 +192,41 @@ def split_sentences(paragraph: str) -> list[str]:
             continue
         if idx + 1 < len(parts):
             sentence += parts[idx + 1]
-        pieces.append(sentence)
+        pieces.extend(split_long_clause(sentence))
     return pieces or [paragraph]
+
+
+def split_long_clause(sentence: str) -> list[str]:
+    if len(sentence) <= LONG_CLAUSE_CHARS:
+        return [sentence]
+    chunks = CLAUSE_SPLIT_RE.split(sentence)
+    pieces: list[str] = []
+    current = ""
+    for idx in range(0, len(chunks), 2):
+        part = chunks[idx].strip()
+        if not part:
+            continue
+        if idx + 1 < len(chunks):
+            part += chunks[idx + 1]
+        if not current:
+            current = part
+        elif len(current) < LONG_CLAUSE_CHARS // 2:
+            current += part
+        else:
+            pieces.append(current)
+            current = part
+    if current:
+        pieces.append(current)
+    return pieces or [sentence]
+
+
+def append_text_unit(output: list[str], line: str) -> None:
+    if line.startswith("\u300d") and output:
+        output[-1] += "\u300d"
+        line = line[1:].strip()
+        if not line:
+            return
+    output.extend(split_sentences(line))
 
 
 def clean_and_normalize(markdown: str) -> tuple[list[str], int, int]:
@@ -167,22 +234,37 @@ def clean_and_normalize(markdown: str) -> tuple[list[str], int, int]:
     original_lines = body.splitlines()
     output: list[str] = []
     removed = 0
+    footer_mode = False
     for raw in original_lines:
         line = raw.strip()
         if not line:
             if output and output[-1] != "":
                 output.append("")
             continue
-        if is_boilerplate(line):
+        if line in {"\u5ef6\u4f38\u95b1\u8b80\uff1a", "\u76f8\u95dc\u6587\u7ae0"}:
+            footer_mode = True
+        if footer_mode or is_metadata_or_footer(line) or is_tag_list(line, output) or is_boilerplate(line):
             removed += 1
             continue
-        output.extend(split_sentences(line))
+        append_text_unit(output, line)
 
     while output and output[0] == "":
         output.pop(0)
     while output and output[-1] == "":
         output.pop()
+    output = collapse_blank_lines(output)
     return output, len(original_lines), removed
+
+
+def collapse_blank_lines(lines: list[str]) -> list[str]:
+    result: list[str] = []
+    for line in lines:
+        if line == "" and (not result or result[-1] == ""):
+            continue
+        result.append(line)
+    while result and result[-1] == "":
+        result.pop()
+    return result
 
 
 def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dict]:
@@ -196,6 +278,9 @@ def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dic
         "FACT \u662f\u5177\u9ad4\u53ef\u67e5\u7684\u4e8b\u5be6\u63cf\u8ff0\uff1b"
         "NONFACT \u662f\u4fee\u8fad\u3001\u8a55\u50f9\u3001\u63a8\u6e2c\u3001"
         "\u7b56\u7565\u89e3\u8b80\u3001\u56e0\u679c\u8a6e\u91cb\u6216\u6295\u8cc7\u5f0f\u7d50\u8ad6\u3002\n"
+        "\u8f38\u5165\u5df2\u7d93\u62c6\u6210\u7d30\u7c92\u5ea6\u55ae\u4f4d\uff0c\u8acb\u9010\u884c\u5224\u65b7\u3002"
+        "\u82e5\u4e00\u884c\u4ecd\u540c\u6642\u542b\u6709\u4e8b\u5be6\u8207\u8a55\u50f9\u3001\u56e0\u679c\u63a8\u8ad6\u6216\u7b56\u7565\u89e3\u8b80\uff0c"
+        "\u4ee5\u8a72\u884c\u4e3b\u8981\u8a9e\u610f\u5224\u65b7\uff0c\u4e0d\u8981\u56e0\u70ba\u6709\u6578\u5b57\u6216\u516c\u53f8\u540d\u5c31\u6a19\u6210 FACT\u3002\n"
         "\u6bcf\u7b46\u5fc5\u9808\u5305\u542b line_span, line_numbers, label, text, votes\u3002"
         "votes \u6070\u597d\u4e09\u7968\uff0c\u6bcf\u7968\u5305\u542b label \u8207\u7e41\u9ad4\u4e2d\u6587 reason\u3002"
         "text \u5fc5\u9808\u9010\u5b57\u7b49\u65bc\u8f38\u5165 text\u3002\n\n"
