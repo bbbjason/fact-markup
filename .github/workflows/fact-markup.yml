@@ -49,7 +49,15 @@ jobs:
           FACT_MARKUP_OUTPUT_DIR: ${{ inputs.output_dir }}
         run: |
           args=()
+          if [ -z "$FACT_MARKUP_URL" ] && [ -z "$FACT_MARKUP_INPUT_FILE" ]; then
+            echo "::error::Fill either Article URL or Existing Markdown path."
+            exit 1
+          fi
           if [ -n "$FACT_MARKUP_URL" ]; then
+            if [[ ! "$FACT_MARKUP_URL" =~ ^https?:// ]]; then
+              echo "::error::Article URL must start with http:// or https://. Paste only the article URL, not a traceback or previous error log."
+              exit 1
+            fi
             args+=(--url "$FACT_MARKUP_URL")
           fi
           if [ -n "$FACT_MARKUP_INPUT_FILE" ]; then
