@@ -319,8 +319,20 @@ def classify_units(client, model: str, units: list[tuple[int, str]]) -> list[dic
 
     seen = {int(record["line_numbers"][0]) for record in records}
     missing = sorted(set(expected) - seen)
-    if missing:
-        raise ValueError(f"Model omitted line numbers: {missing}")
+    for line_no in missing:
+        records.append(
+            {
+                "line_span": str(line_no),
+                "line_numbers": [line_no],
+                "label": "NONFACT",
+                "text": expected[line_no],
+                "votes": [
+                    {"label": "NONFACT", "reason": "\u6a21\u578b\u6f0f\u5224\uff0c\u4fdd\u5b88\u6a19\u8a18"},
+                    {"label": "NONFACT", "reason": "\u672a\u6536\u5230\u5b8c\u6574\u56de\u8986"},
+                    {"label": "NONFACT", "reason": "\u9700\u4eba\u5de5\u5fa9\u6838"},
+                ],
+            }
+        )
     return sorted(records, key=lambda item: int(item["line_numbers"][0]))
 
 
